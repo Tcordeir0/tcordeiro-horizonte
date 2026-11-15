@@ -93,3 +93,12 @@ if (project.hasProperty('withPerf')) {
 tasks.matching { it.name == "runClientGameTest" }.configureEach {
 	for (k in ['hz.out', 'hz.secs', 'hz.dist', 'hz.rd']) if (project.hasProperty(k)) systemProperty k, project.property(k)
 }
+
+// ./gradlew runClientGameTest -PclientOnly=NomeDaClasse : só esse teste de cliente
+tasks.named("processGametestResources") {
+	def only = project.findProperty('clientOnly') ?: ""
+	inputs.property "clientOnly", only
+	if (only) filesMatching("fabric.mod.json") {
+		filter { String line -> line.replaceAll(/"fabric-client-gametest": \[[^\]]*\]/, "\"fabric-client-gametest\": [\"com.tcordeiro.horizonte.test.${only}\"]") }
+	}
+}
