@@ -19,13 +19,13 @@ public final class HorizonteConfig {
 	/** "baixa", "media" ou "alta": até que distância se usam células de 2/4/8 blocos. */
 	public String quality = "media";
 	/** Mundo local: pedir ao servidor integrado os chunks ao longe (carrega do disco ou gera os que faltam), aos poucos. */
-	public boolean generate = true;
+	public boolean generate = false;
 	/** Raio (chunks) até onde se pedem chunks ao servidor integrado. */
-	public int generateRadius = 64;
+	public int generateRadius = 32;
 	/** Só pede chunks se o servidor estiver abaixo disto (ms por tick). */
-	public int generateMaxMspt = 35;
+	public int generateMaxMspt = 20;
 	/** Pedidos de chunks em simultâneo. */
-	public int generateInFlight = 4;
+	public int generateInFlight = 2;
 	/** Teto de memória para os resumos carregados (MB); acima disto descarregam-se as regiões mais longe (ficam no disco). */
 	public int memoryMB = 160;
 	/** Empurra a neblina do terreno normal para longe, para não haver uma parede de neblina à frente do terreno ao longe. */
