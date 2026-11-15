@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "com.tcordeiro.horizonte.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"LevelRendererMixin",
+		"FogRendererMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

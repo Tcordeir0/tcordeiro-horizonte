@@ -1,0 +1,16 @@
+{
+	"schemaVersion": 1,
+	"id": "thorizonte-gametest",
+	"version": "1.0.0",
+	"name": "Tcordeiro's Horizonte — testes",
+	"authors": ["Tcordeiro"],
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"fabric-client-gametest": ["com.tcordeiro.horizonte.test.HorizonteClientTest"]
+	},
+	"depends": {
+		"thorizonte": "*",
+		"fabric-client-gametest-api-v1": "*"
+	}
+}

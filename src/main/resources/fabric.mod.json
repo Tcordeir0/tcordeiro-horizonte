@@ -1,0 +1,26 @@
+{
+	"schemaVersion": 1,
+	"id": "thorizonte",
+	"version": "${version}",
+	"name": "Tcordeiro's Horizonte",
+	"description": "Terreno ao longe (LOD) que funciona no Mac (OpenGL 4.1): resumos dos chunks guardados em disco e desenhados como colunas simples para lá da distância de visão, com neblina. Compatível com Sodium; pausa com shaders do Iris; desliga-se se o Voxy ou o Distant Horizons funcionarem. Feito por Tcordeiro.",
+	"authors": ["Tcordeiro"],
+	"contact": {},
+	"license": "MIT",
+	"icon": "assets/thorizonte/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": ["com.tcordeiro.horizonte.Horizonte"],
+		"client": ["com.tcordeiro.horizonte.client.HorizonteClient"]
+	},
+	"mixins": [{"config": "thorizonte.client.mixins.json", "environment": "client"}],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"sodium": "*"
+	}
+}

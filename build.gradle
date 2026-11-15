@@ -1,0 +1,95 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+// Testes de cliente (fora do jar final).
+sourceSets {
+	gametest {
+		compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+		runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+	}
+}
+
+loom {
+	splitEnvironmentSourceSets()
+
+	mods {
+		"thorizonte" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+		"thorizonte-gametest" {
+			sourceSet sourceSets.gametest
+		}
+	}
+
+	runs {
+		clientGameTest {
+			client()
+			name "Client Game Test"
+			source sourceSets.gametest
+			vmArg "-Dfabric.client.gametest"
+			vmArg "-Xmx3G"
+			runDir "build/clientgametest"
+		}
+	}
+}
+
+sourceSets.gametest {
+	compileClasspath += sourceSets.client.compileClasspath + sourceSets.client.output
+	runtimeClasspath += sourceSets.client.runtimeClasspath + sourceSets.client.output
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// Testes rápidos da matemática do LOD (Java puro, sem o jogo)
+	testImplementation "org.junit.jupiter:junit-jupiter:5.11.3"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+	useJUnitPlatform()
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	def projectName = project.name
+	inputs.property "projectName", projectName
+	from("LICENSE") {
+		rename { "${it}_$projectName" }
+	}
+}
+
+// Jars do Horizon do Talys (só para os testes; não entram no jar do mod nem no Git):
+//  -PwithPerf : Sodium, Iris, Voxy (que no Mac fica «unsupported»), Lithium, ImmediatelyFast, FerriteCore, ModernFix
+def horizonMods = "${System.getProperty('user.home')}/Library/Application Support/horizon/instances/fabric/mods"
+if (project.hasProperty('withPerf')) {
+	dependencies {
+		gametestRuntimeOnly fileTree(dir: horizonMods, includes: ['sodium-fabric-*.jar', 'iris-fabric-*.jar', 'voxy-*.jar', 'lithium-fabric-*.jar',
+				'ImmediatelyFast-Fabric-*.jar', 'ferritecore-*.jar', 'modernfix-*.jar'])
+	}
+}
+// propriedades do teste de cliente: -Phz.out=nome -Phz.secs=60
+tasks.matching { it.name == "runClientGameTest" }.configureEach {
+	for (k in ['hz.out', 'hz.secs', 'hz.dist', 'hz.rd']) if (project.hasProperty(k)) systemProperty k, project.property(k)
+}
