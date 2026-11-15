@@ -20,6 +20,7 @@ import org.lwjgl.system.MemoryUtil;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.backend.opengl.GlTexture;
 import com.tcordeiro.horizonte.Horizonte;
@@ -59,12 +60,15 @@ public final class LodRenderer {
 			uniform mat4 uProj;
 			uniform mat4 uView;
 			uniform vec3 uOffset;
+			uniform float uHole;
 			out vec4 vColor;
 			out vec3 vRel;
 			void main() {
 			    vec3 rel = aPos + uOffset;
 			    vRel = rel;
 			    vColor = aColor;
+			    // recorte do buraco por vértice (sem discard: as GPUs Apple perdem a remoção de superfícies escondidas com discard)
+			    gl_ClipDistance[0] = length(rel.xz) - uHole;
 			    gl_Position = uProj * uView * vec4(rel, 1.0);
 			}
 			""";
@@ -73,7 +77,6 @@ public final class LodRenderer {
 			#version 330 core
 			in vec4 vColor;
 			in vec3 vRel;
-			uniform float uHole;
 			uniform vec4 uFogColor;
 			uniform vec4 uFog; // ambiente início/fim, distância início/fim
 			out vec4 fragColor;
@@ -84,7 +87,6 @@ public final class LodRenderer {
 			}
 			void main() {
 			    float dxz = length(vRel.xz);
-			    if (dxz < uHole) discard;
 			    float sph = length(vRel);
 			    float cyl = max(dxz, abs(vRel.y));
 			    float f = max(lin(sph, uFog.x, uFog.y), lin(cyl, uFog.z, uFog.w));
@@ -92,6 +94,12 @@ public final class LodRenderer {
 			}
 			""";
 
+	/**
+	 * Com profundidade em float (D32F, como o jogo usa) o LOD desenha-se numa faixa minúscula junto ao «longe» da profundidade
+	 * invertida do jogo (0..LOD_DEPTH): fica sempre atrás de tudo o que o jogo desenha e não é preciso limpar a profundidade duas
+	 * vezes (cada limpeza parte o passo de desenho na GPU do M1).
+	 */
+	static final double LOD_DEPTH = 2e-6;
 	private static boolean initTried, ready;
 	private static int program, uProj, uView, uOffset, uHole, uFogColor, uFog;
 	private static int ebo, eboQuads;
@@ -149,7 +157,8 @@ public final class LodRenderer {
 			return;
 		}
 		uploadDone(2_000_000L);
-		schedule(store, px, pz, lodEnd, hole, cfg.qualityFactor());
+		// pedir malhas novas só de 4 em 4 frames (a lista é a mesma; poupa CPU a FPS altos)
+		if ((frames & 3) == 0 || orderStore != store) schedule(store, px, pz, lodEnd, hole, cfg.qualityFactor());
 		// projeção: x/y/w como o jogo (campo de visão, proporção, balanço da câmara), profundidade normal com plano longínquo maior
 		Matrix4f proj = new Matrix4f(cam.projectionMatrix);
 		float near = 4f, far = lodEnd + 1024f;
@@ -192,32 +201,50 @@ public final class LodRenderer {
 		int prevDepthFunc = glGetInteger(GL_DEPTH_FUNC);
 		boolean prevDepthMask = glGetBoolean(GL_DEPTH_WRITEMASK);
 		float prevClearDepth = glGetFloat(GL_DEPTH_CLEAR_VALUE);
+		boolean floatDepth = depth.getFormat() == GpuFormat.D32_FLOAT;
+		float[] prevRange = new float[2];
 		boolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST), prevBlend = glIsEnabled(GL_BLEND), prevCull = glIsEnabled(GL_CULL_FACE);
 		boolean prevScissor = glIsEnabled(GL_SCISSOR_TEST), prevOffset = glIsEnabled(GL_POLYGON_OFFSET_FILL);
+		boolean prevClip = glIsEnabled(GL_CLIP_DISTANCE0);
+		int prevCullMode = glGetInteger(GL_CULL_FACE_MODE), prevFront = glGetInteger(GL_FRONT_FACE);
 		int[] prevViewport = new int[4];
 		boolean[] prevMask = new boolean[4];
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			IntBuffer vp = stack.mallocInt(4);
 			glGetIntegerv(GL_VIEWPORT, vp);
 			vp.get(prevViewport);
+			FloatBuffer dr = stack.mallocFloat(2);
+			glGetFloatv(GL_DEPTH_RANGE, dr);
+			prevRange[0] = dr.get(0);
+			prevRange[1] = dr.get(1);
 			ByteBuffer cm = stack.malloc(4);
 			glGetBooleanv(GL_COLOR_WRITEMASK, cm);
 			for (int i = 0; i < 4; i++) prevMask[i] = cm.get(i) != 0;
 		}
 		try {
-			if (!bindFbo(gc.glId(), gd.glId())) return;
+			if (!alreadyBound(prevDraw, gc.glId(), gd.glId()) && !bindFbo(gc.glId(), gd.glId())) return;
 			glViewport(0, 0, target.width, target.height);
 			glDisable(GL_SCISSOR_TEST);
 			glDisable(GL_BLEND);
-			glDisable(GL_CULL_FACE);
+			// todas as faces da malha apontam para fora (sentido anti-horário): as de trás não se desenham
+			glEnable(GL_CULL_FACE);
+			glCullFace(GL_BACK);
+			glFrontFace(GL_CCW);
+			glEnable(GL_CLIP_DISTANCE0);
 			glDisable(GL_POLYGON_OFFSET_FILL);
 			glColorMask(true, true, true, true);
 			glDepthMask(true);
-			glClearDepth(1.0);
-			glClear(GL_DEPTH_BUFFER_BIT);
+			if (!floatDepth) {
+				glClearDepth(1.0);
+				glClear(GL_DEPTH_BUFFER_BIT);
+			}
 			if (!visible.isEmpty()) {
 				glEnable(GL_DEPTH_TEST);
-				glDepthFunc(GL_LESS);
+				if (floatDepth) {
+					// perto → LOD_DEPTH, longe → 0 (profundidade invertida, como a do jogo, que limpa a 0)
+					glDepthRange(LOD_DEPTH, 0.0);
+					glDepthFunc(GL_GEQUAL);
+				} else glDepthFunc(GL_LESS);
 				glUseProgram(program);
 				try (MemoryStack stack = MemoryStack.stackPush()) {
 					FloatBuffer m = stack.mallocFloat(16);
@@ -234,9 +261,11 @@ public final class LodRenderer {
 					glDrawElements(GL_TRIANGLES, t.quads * 6, GL_UNSIGNED_INT, 0L);
 				}
 			}
-			// os chunks normais desenham-se por cima de tudo o que é LOD (o jogo usa profundidade invertida: limpa a 0)
-			glClearDepth(RenderSystem.DEFAULT_DEPTH_CLEAR_VALUE);
-			glClear(GL_DEPTH_BUFFER_BIT);
+			// sem D32F: limpar outra vez para os chunks normais ficarem por cima (o jogo usa profundidade invertida: limpa a 0)
+			if (!floatDepth) {
+				glClearDepth(RenderSystem.DEFAULT_DEPTH_CLEAR_VALUE);
+				glClear(GL_DEPTH_BUFFER_BIT);
+			}
 		} finally {
 			glBindVertexArray(prevVao);
 			glBindBuffer(GL_ARRAY_BUFFER, prevArray);
@@ -247,18 +276,30 @@ public final class LodRenderer {
 			glColorMask(prevMask[0], prevMask[1], prevMask[2], prevMask[3]);
 			glDepthMask(prevDepthMask);
 			glDepthFunc(prevDepthFunc);
+			glDepthRange(prevRange[0], prevRange[1]);
 			glClearDepth(prevClearDepth);
 			set(GL_DEPTH_TEST, prevDepthTest);
 			set(GL_BLEND, prevBlend);
 			set(GL_CULL_FACE, prevCull);
 			set(GL_SCISSOR_TEST, prevScissor);
 			set(GL_POLYGON_OFFSET_FILL, prevOffset);
+			set(GL_CLIP_DISTANCE0, prevClip);
+			glCullFace(prevCullMode);
+			glFrontFace(prevFront);
 		}
 	}
 
 	private static void set(int cap, boolean on) {
 		if (on) glEnable(cap);
 		else glDisable(cap);
+	}
+
+	/** O framebuffer já preso é o principal (mesmas texturas)? Então não se troca (trocar parte o passo de desenho). */
+	private static boolean alreadyBound(int fb, int colorId, int depthId) {
+		if (fb == 0) return false;
+		int c = glGetFramebufferAttachmentParameteri(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+		int d = glGetFramebufferAttachmentParameteri(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+		return c == colorId && d == depthId;
 	}
 
 	private static boolean bindFbo(int colorId, int depthId) {

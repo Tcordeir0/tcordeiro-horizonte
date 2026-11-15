@@ -17,6 +17,11 @@ public final class MeshBuilder {
 	}
 
 	public static final float SHADE_TOP = 1.0f, SHADE_NS = 0.80f, SHADE_EW = 0.64f;
+	/**
+	 * Comprimento máximo (blocos) de um topo juntado: o buraco dos chunks normais recorta-se por vértice (gl_ClipDistance), por isso
+	 * os quadrados não podem ser compridos demais (a corda de 32 blocos num círculo de 52 desvia ~2,5 blocos, dentro da sobreposição).
+	 */
+	public static final int MAX_RUN_BLOCKS = 32;
 
 	/** Resultado: {@code data} tem {@code quads × 16} inteiros válidos. */
 	public record Mesh(int tx, int tz, int step, int[] data, int quads, int minY, int maxY) {
@@ -75,8 +80,8 @@ public final class MeshBuilder {
 					continue;
 				}
 				int col = c[j * w + i];
-				int e = i + 1;
-				while (e <= n && h[j * w + e] == hh && c[j * w + e] == col) e++;
+				int e = i + 1, maxCells = Math.max(1, MAX_RUN_BLOCKS / step);
+				while (e <= n && e - i < maxCells && h[j * w + e] == hh && c[j * w + e] == col) e++;
 				float x0 = (i - 1) * step, x1 = (e - 1) * step, z0 = (j - 1) * step, z1 = j * step;
 				int rgba = LodMath.packRgba(col);
 				quad(x0, hh, z0, x0, hh, z1, x1, hh, z1, x1, hh, z0, rgba);

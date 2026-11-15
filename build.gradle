@@ -89,9 +89,19 @@ if (project.hasProperty('withPerf')) {
 				'ImmediatelyFast-Fabric-*.jar', 'ferritecore-*.jar', 'modernfix-*.jar'])
 	}
 }
+// -PwithGame : o mais parecido possível com o jogo do Talys (medição de FPS real)
+if (project.hasProperty('withGame')) {
+	dependencies {
+		gametestRuntimeOnly fileTree(dir: horizonMods, includes: ['sodium-fabric-*.jar', 'iris-fabric-*.jar', 'voxy-*.jar', 'lithium-fabric-*.jar',
+				'ImmediatelyFast-Fabric-*.jar', 'ferritecore-*.jar', 'modernfix-*.jar', 'entityculling-fabric-*.jar', 'moreculling-fabric-*.jar',
+				'cloth-config-fabric-*.jar', 'entity_model_features-*.jar', 'entity_texture_features-*.jar',
+				'tcordeiro-*.jar', 'teletransporter-*.jar', 'cubcoin-*.jar', 'receitario-*.jar'],
+				excludes: ['tcordeiro-horizonte-*.jar', 'tcordeiro-vilas-*.jar'])
+	}
+}
 // propriedades do teste de cliente: -Phz.out=nome -Phz.secs=60
 tasks.matching { it.name == "runClientGameTest" }.configureEach {
-	for (k in ['hz.out', 'hz.secs', 'hz.dist', 'hz.rd']) if (project.hasProperty(k)) systemProperty k, project.property(k)
+	for (k in ['hz.out', 'hz.secs', 'hz.dist', 'hz.rd', 'hz.fpsSecs']) if (project.hasProperty(k)) systemProperty k, project.property(k)
 }
 
 // ./gradlew runClientGameTest -PclientOnly=NomeDaClasse : só esse teste de cliente

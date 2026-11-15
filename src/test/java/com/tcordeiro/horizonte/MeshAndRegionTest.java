@@ -26,7 +26,12 @@ class MeshAndRegionTest {
 		for (int step : LodMath.STEPS) {
 			MeshBuilder.Mesh m = b.build(new Fn((x, z) -> 64, (x, z) -> 0x55AA55), 3, -2, step);
 			int n = LodMath.TILE_BLOCKS / step;
-			assertEquals(n, m.quads(), "uma faixa por linha no passo " + step);
+			assertEquals(n * (LodMath.TILE_BLOCKS / MeshBuilder.MAX_RUN_BLOCKS), m.quads(), "faixas de " + MeshBuilder.MAX_RUN_BLOCKS + " blocos no passo " + step);
+			// nenhum topo mais comprido do que o limite
+			for (int q = 0; q < m.quads(); q++) {
+				float xa = Float.intBitsToFloat(m.data()[q * 16]), xc = Float.intBitsToFloat(m.data()[q * 16 + 8]);
+				assertTrue(Math.abs(xc - xa) <= MeshBuilder.MAX_RUN_BLOCKS);
+			}
 			assertEquals(64, m.minY());
 			assertEquals(64, m.maxY());
 			// a faixa cobre o mosaico de lado a lado
@@ -42,8 +47,9 @@ class MeshAndRegionTest {
 		// pilar de 2×2 blocos (1 amostra) em (10,10) com 80 de altura; resto a 64
 		MeshBuilder.Mesh m = b.build(new Fn((x, z) -> x == 10 && z == 10 ? 80 : 64, (x, z) -> 0x808080), 0, 0, 2);
 		int rows = LodMath.TILE_BLOCKS / 2;
-		// linhas planas + a linha do pilar parte-se em 3 (antes, pilar, depois) + 4 paredes
-		assertEquals(rows - 1 + 3 + 4, m.quads());
+		// linhas planas em faixas de 32 blocos (4 por linha) + a faixa do pilar parte-se em 3 (antes, pilar, depois) + 4 paredes
+		int perRow = LodMath.TILE_BLOCKS / MeshBuilder.MAX_RUN_BLOCKS;
+		assertEquals((rows - 1) * perRow + (perRow - 1) + 3 + 4, m.quads());
 		assertEquals(80, m.maxY());
 	}
 

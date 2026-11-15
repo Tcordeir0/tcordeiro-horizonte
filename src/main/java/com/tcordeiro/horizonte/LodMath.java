@@ -65,9 +65,9 @@ public final class LodMath {
 	 * {@code quality} 0.5 (baixa), 1 (média), 2 (alta).
 	 */
 	public static int stepFor(double dist, double quality) {
-		if (dist < 192 * quality) return 2;
-		if (dist < 448 * quality) return 4;
-		if (dist < 960 * quality) return 8;
+		if (dist < 96 * quality) return 2;
+		if (dist < 256 * quality) return 4;
+		if (dist < 640 * quality) return 8;
 		return 16;
 	}
 

@@ -50,12 +50,12 @@ class LodMathTest {
 
 	@Test
 	void stepGrowsWithDistanceAndQuality() {
-		assertEquals(2, LodMath.stepFor(100, 1));
-		assertEquals(4, LodMath.stepFor(300, 1));
-		assertEquals(8, LodMath.stepFor(700, 1));
+		assertEquals(2, LodMath.stepFor(60, 1));
+		assertEquals(4, LodMath.stepFor(200, 1));
+		assertEquals(8, LodMath.stepFor(500, 1));
 		assertEquals(16, LodMath.stepFor(2000, 1));
-		assertEquals(4, LodMath.stepFor(100, 0.5));
-		assertEquals(2, LodMath.stepFor(300, 2));
+		assertEquals(4, LodMath.stepFor(60, 0.5));
+		assertEquals(2, LodMath.stepFor(150, 2));
 		int prev = 0;
 		for (int d = 0; d < 5000; d += 10) {
 			int s = LodMath.stepFor(d, 1);
