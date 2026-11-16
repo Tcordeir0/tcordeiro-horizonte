@@ -16,7 +16,8 @@ import net.minecraft.world.level.material.MapColor;
 
 /**
  * Tira o resumo de um chunk carregado: para cada coluna, a altura do topo (heightmap MOTION_BLOCKING: chão, água, folhas; ignora
- * erva e flores) e a cor do bloco de cima (cor do mapa, com a erva/folhas/água tingidas pelo bioma). Depois reduz a 8×8 amostras.
+ * erva e flores) e a cor do bloco de cima (cor média da textura real do bloco, com a erva/folhas/água tingidas pelo bioma;
+ * cor do mapa se a textura não se puder ler). Depois reduz a 8×8 amostras.
  * Serve tanto para chunks do cliente como do servidor integrado (só lê o chunk).
  */
 public final class ChunkSampler {
@@ -56,9 +57,15 @@ public final class ChunkSampler {
 	static int columnColor(LevelChunk chunk, BlockPos.MutableBlockPos p, int x, int y, int z, int minY) {
 		p.set(x, y + 1, z);
 		BlockState above = chunk.getBlockState(p);
-		if (above.is(Blocks.SNOW)) return MapColor.SNOW.col;
+		if (above.is(Blocks.SNOW)) return texOr(above, MapColor.SNOW.col);
 		p.set(x, y, z);
 		BlockState s = chunk.getBlockState(p);
+		// o topo do heightmap pode ser ar (chunks do servidor ainda a acabar): descer até ao primeiro bloco
+		for (int k = 1; s.isAir() && k <= 6 && y - 1 > minY; k++) {
+			y--;
+			p.set(x, y, z);
+			s = chunk.getBlockState(p);
+		}
 		FluidState fs = s.getFluidState();
 		if (!fs.isEmpty() && fs.is(FluidTags.WATER)) {
 			int depth = 0;
@@ -69,8 +76,23 @@ public final class ChunkSampler {
 				depth++;
 			}
 			int water = biome(chunk, x, y, z).value().getWaterColor();
-			return LodMath.shade(water, 1.0f - Math.min(depth, 16) / 16f * 0.45f);
+			int tex = TextureColors.of(Blocks.WATER.defaultBlockState());
+			// textura da água × cor da água do bioma, como o jogo; mais escura onde é funda (o fundo vê-se menos)
+			int col = tex == TextureColors.NONE ? water : TextureColors.multiply(tex & 0xFFFFFF, water);
+			return LodMath.shade(col, 1.0f - Math.min(depth, 16) / 16f * 0.35f);
 		}
+		int tex = TextureColors.of(s);
+		if (tex != TextureColors.NONE) {
+			int rgb = tex & 0xFFFFFF;
+			if ((tex & TextureColors.TINTED) == 0) return rgb;
+			if (s.is(Blocks.GRASS_BLOCK)) return TextureColors.multiply(rgb, biome(chunk, x, y, z).value().getGrassColor(x, z));
+			if (s.is(Blocks.SPRUCE_LEAVES)) return TextureColors.multiply(rgb, 0x619961);
+			if (s.is(Blocks.BIRCH_LEAVES)) return TextureColors.multiply(rgb, 0x80A755);
+			if (s.is(BlockTags.LEAVES) || s.is(Blocks.VINE)) return TextureColors.multiply(rgb, biome(chunk, x, y, z).value().getFoliageColor());
+			int tint = TextureColors.defaultTint(s);
+			return tint < 0 ? rgb : TextureColors.multiply(rgb, tint);
+		}
+		// sem textura legível: cor do mapa como antes
 		if (s.is(Blocks.GRASS_BLOCK)) return LodMath.shade(biome(chunk, x, y, z).value().getGrassColor(x, z), 0.88f);
 		if (s.is(BlockTags.LEAVES) && tintedLeaves(s)) return LodMath.shade(biome(chunk, x, y, z).value().getFoliageColor(), 0.78f);
 		if (s.is(Blocks.SPRUCE_LEAVES)) return LodMath.shade(0x619961, 0.78f);
@@ -82,6 +104,11 @@ public final class ChunkSampler {
 			col = chunk.getBlockState(p).getMapColor(chunk, p).col;
 		}
 		return col == 0 ? 0x808080 : col;
+	}
+
+	private static int texOr(BlockState s, int fallback) {
+		int t = TextureColors.of(s);
+		return t == TextureColors.NONE ? fallback : t & 0xFFFFFF;
 	}
 
 	private static Holder<Biome> biome(LevelChunk chunk, int x, int y, int z) {

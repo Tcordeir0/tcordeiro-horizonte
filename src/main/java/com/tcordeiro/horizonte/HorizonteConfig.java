@@ -32,6 +32,8 @@ public final class HorizonteConfig {
 	public boolean extendFog = true;
 	/** Sobreposição (blocos) entre o fim dos chunks normais e o início do terreno ao longe. */
 	public int overlapBlocks = 12;
+	/** Ligeira variação de cor por célula (para o terreno ao longe não parecer plástico liso). */
+	public boolean colorNoise = true;
 
 	public double qualityFactor() {
 		return switch (quality) {

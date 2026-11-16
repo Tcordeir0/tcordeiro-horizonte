@@ -7,7 +7,7 @@
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
-		"fabric-client-gametest": ["com.tcordeiro.horizonte.test.HorizonteClientTest", "com.tcordeiro.horizonte.test.HorizonteVideoTest", "com.tcordeiro.horizonte.test.HorizonteFpsTest"]
+		"fabric-client-gametest": ["com.tcordeiro.horizonte.test.HorizonteClientTest", "com.tcordeiro.horizonte.test.HorizonteVideoTest", "com.tcordeiro.horizonte.test.HorizonteFpsTest", "com.tcordeiro.horizonte.test.HorizonteCosturaTest", "com.tcordeiro.horizonte.test.HorizonteBalancoTest"]
 	},
 	"mixins": ["thorizonte-gametest.mixins.json"],
 	"depends": {

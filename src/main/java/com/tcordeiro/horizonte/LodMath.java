@@ -71,6 +71,53 @@ public final class LodMath {
 		return 16;
 	}
 
+	/**
+	 * Passo do mosaico pela distância (blocos) da parte mais perto do mosaico à costura com os chunks normais. Junto à costura usa-se
+	 * o passo mais fino (2 blocos, a resolução guardada) numa faixa de ~3 chunks, e depois engrossa-se aos poucos, sempre ×2 de um
+	 * nível para o seguinte. {@code quality} 0.5 (baixa), 1 (média), 2 (alta).
+	 */
+	public static int stepForSeam(double distFromSeam, double quality) {
+		if (distFromSeam < 48 * quality) return 2;
+		if (distFromSeam < 192 * quality) return 4;
+		if (distFromSeam < 512 * quality) return 8;
+		return 16;
+	}
+
+	/**
+	 * Troca só a linha da profundidade (z do clip) de uma projeção do jogo {@code m} (coluna-maior, 16 floats, JOML) pela de uma
+	 * perspetiva com {@code near}/{@code far}, mantendo x, y e w. Funciona também com o balanço da visão, a inclinação do dano e a
+	 * náusea já multiplicados (o jogo faz P × B, com B afim): a linha w de P × B é −(linha z de B), por isso a linha z nova é
+	 * −a·w + b·(0,0,0,1), com {a, b} = {@link #depthRow}.
+	 */
+	public static void replaceDepthRow(float[] m, float near, float far) {
+		float[] r = depthRow(near, far);
+		float a = r[0], b = r[1];
+		m[2] = -a * m[3];
+		m[6] = -a * m[7];
+		m[10] = -a * m[11];
+		m[14] = -a * m[15] + b;
+	}
+
+	/**
+	 * Cor da luz do jogo para um bloco a céu aberto (luz do céu 15, sem luz de blocos), igual ao shader {@code lightmap.fsh}: de dia
+	 * dá branco, à noite escurece como o terreno normal. Escreve em {@code out} (RGB 0..1).
+	 */
+	public static void skyLight(float[] ambient, float[] nightVisionColor, float nightVision, float[] skyColor, float skyFactor, float boss,
+			float darkness, float brightness, float[] out) {
+		for (int i = 0; i < 3; i++) out[i] = Math.max(ambient[i], nightVisionColor[i] * nightVision) + skyColor[i] * skyFactor;
+		float[] bossMul = {0.7f, 0.6f, 0.6f};
+		float mx = 0;
+		for (int i = 0; i < 3; i++) {
+			float c = out[i] + (out[i] * bossMul[i] - out[i]) * boss - darkness;
+			out[i] = c < 0 ? 0 : c > 1 ? 1 : c;
+			mx = Math.max(mx, out[i]);
+		}
+		if (mx <= 0) return;
+		float inv = 1f - mx;
+		float scaled = 1f - inv * inv * inv * inv;
+		for (int i = 0; i < 3; i++) out[i] = out[i] + (out[i] * (scaled / mx) - out[i]) * brightness;
+	}
+
 	/** Neblina linear como a do jogo: 0 antes de {@code start}, 1 a partir de {@code end}. */
 	public static float fogFactor(float dist, float start, float end) {
 		if (end <= start) return dist >= end ? 1f : 0f;

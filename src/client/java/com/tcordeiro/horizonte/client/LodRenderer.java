@@ -30,6 +30,7 @@ import com.tcordeiro.horizonte.MeshBuilder;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.fog.FogData;
+import net.minecraft.client.renderer.state.LightmapRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 
 /**
@@ -63,9 +64,11 @@ public final class LodRenderer {
 			uniform float uHole;
 			out vec4 vColor;
 			out vec3 vRel;
+			out vec3 vLocal;
 			void main() {
 			    vec3 rel = aPos + uOffset;
 			    vRel = rel;
+			    vLocal = aPos;
 			    vColor = aColor;
 			    // recorte do buraco por vértice (sem discard: as GPUs Apple perdem a remoção de superfícies escondidas com discard)
 			    gl_ClipDistance[0] = length(rel.xz) - uHole;
@@ -77,9 +80,18 @@ public final class LodRenderer {
 			#version 330 core
 			in vec4 vColor;
 			in vec3 vRel;
+			in vec3 vLocal;
 			uniform vec4 uFogColor;
 			uniform vec4 uFog; // ambiente início/fim, distância início/fim
+			uniform vec3 uLight; // luz do céu do jogo (lightmap com céu 15): escurece à noite como o terreno normal
+			uniform vec2 uTileOrigin; // canto do mosaico (blocos, módulo 4096) para o ruído
+			uniform float uNoise; // amplitude da variação de cor por célula (0 = desligado)
 			out vec4 fragColor;
+			float hash(vec3 p) {
+			    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+			    p += dot(p, p.yxz + 33.33);
+			    return fract((p.x + p.y) * p.z);
+			}
 			float lin(float d, float s, float e) {
 			    if (d <= s) return 0.0;
 			    if (d >= e) return 1.0;
@@ -90,7 +102,11 @@ public final class LodRenderer {
 			    float sph = length(vRel);
 			    float cyl = max(dxz, abs(vRel.y));
 			    float f = max(lin(sph, uFog.x, uFog.y), lin(cyl, uFog.z, uFog.w));
-			    fragColor = vec4(mix(vColor.rgb, uFogColor.rgb, f * uFogColor.a), 1.0);
+			    // ligeira variação por célula de 2 blocos (e por bloco na vertical), para não parecer plástico liso
+			    vec3 cell = floor(vec3((vLocal.x + uTileOrigin.x) * 0.5, vLocal.y - 0.001, (vLocal.z + uTileOrigin.y) * 0.5));
+			    float n = 1.0 + (hash(cell) - 0.5) * uNoise;
+			    vec3 c = vColor.rgb * uLight * n;
+			    fragColor = vec4(mix(c, uFogColor.rgb, f * uFogColor.a), 1.0);
 			}
 			""";
 
@@ -101,7 +117,7 @@ public final class LodRenderer {
 	 */
 	static final double LOD_DEPTH = 2e-6;
 	private static boolean initTried, ready;
-	private static int program, uProj, uView, uOffset, uHole, uFogColor, uFog;
+	private static int program, uProj, uView, uOffset, uHole, uFogColor, uFog, uLight, uTileOrigin, uNoise;
 	private static int ebo, eboQuads;
 	private static int fbo, fboColorId = -1, fboDepthId = -1;
 	private static final Map<Long, Tile> tiles = new HashMap<>();
@@ -118,6 +134,20 @@ public final class LodRenderer {
 	public static volatile long gpuBytes, lastNanos, frames;
 	public static volatile String lastError = "";
 	public static volatile float lastFogStart, lastFogEnd, lastEnvStart, lastEnvEnd, lastHole;
+	/** Matrizes usadas no último frame (para os testes compararem com as do jogo). */
+	public static final Matrix4f lastProj = new Matrix4f(), lastView = new Matrix4f();
+	/** Só para o teste antes/depois: desenhar com a projeção antiga (sem balanço da visão). */
+	public static volatile boolean legacyProjection;
+
+	/** Projeção do mundo deste frame, com balanço da visão/dano/náusea (apanhada em GameRenderer.renderLevel). */
+	private static final Matrix4f levelProj = new Matrix4f();
+	private static boolean levelProjFresh, warnedNoCapture;
+	private static final float[] light = {1, 1, 1};
+
+	public static void captureLevelProjection(Matrix4f m) {
+		levelProj.set(m);
+		levelProjFresh = true;
+	}
 
 	/** Chamado no início do passo principal do mundo (fio de desenho). */
 	public static void render(CameraRenderState cam, RenderTarget target) {
@@ -159,12 +189,28 @@ public final class LodRenderer {
 		uploadDone(2_000_000L);
 		// pedir malhas novas só de 4 em 4 frames (a lista é a mesma; poupa CPU a FPS altos)
 		if ((frames & 3) == 0 || orderStore != store) schedule(store, px, pz, lodEnd, hole, cfg.qualityFactor());
-		// projeção: x/y/w como o jogo (campo de visão, proporção, balanço da câmara), profundidade normal com plano longínquo maior
-		Matrix4f proj = new Matrix4f(cam.projectionMatrix);
+		// projeção: x/y/w exatamente as do jogo neste frame (campo de visão, zoom, balanço da visão, dano, náusea), só a
+		// profundidade muda (plano longínquo maior)
 		float near = 4f, far = lodEnd + 1024f;
-		float[] row = LodMath.depthRow(near, far);
-		proj.m02(0).m12(0).m22(row[0]).m32(row[1]).m23(-1).m33(0);
+		Matrix4f proj;
+		if (legacyProjection) {
+			proj = new Matrix4f(cam.projectionMatrix);
+			float[] row = LodMath.depthRow(near, far);
+			proj.m02(0).m12(0).m22(row[0]).m32(row[1]).m23(-1).m33(0);
+		} else {
+			if (!levelProjFresh && !warnedNoCapture) {
+				warnedNoCapture = true;
+				Horizonte.LOG.warn("Horizonte: não apanhei a projeção do jogo (outro mod mudou GameRenderer.renderLevel?); sem balanço da visão no LOD");
+			}
+			float[] m = (levelProjFresh ? levelProj : cam.projectionMatrix).get(new float[16]);
+			LodMath.replaceDepthRow(m, near, far);
+			proj = new Matrix4f().set(m);
+		}
+		levelProjFresh = false;
 		Matrix4f view = new Matrix4f(cam.viewRotationMatrix);
+		lastProj.set(proj);
+		lastView.set(view);
+		updateLight();
 		FrustumIntersection frustum = new FrustumIntersection(new Matrix4f(proj).mul(view));
 		List<Tile> visible = new ArrayList<>();
 		int quads = 0;
@@ -254,7 +300,10 @@ public final class LodRenderer {
 				glUniform1f(uHole, hole);
 				glUniform4f(uFogColor, fogColor.x, fogColor.y, fogColor.z, fogColor.w);
 				glUniform4f(uFog, fogParams[0], fogParams[1], fogParams[2], fogParams[3]);
+				glUniform3f(uLight, light[0], light[1], light[2]);
+				glUniform1f(uNoise, HorizonteConfig.get().colorNoise ? 0.08f : 0f);
 				for (Tile t : visible) {
+					glUniform2f(uTileOrigin, (float) Math.floorMod(t.tx * LodMath.TILE_BLOCKS, 4096), (float) Math.floorMod(t.tz * LodMath.TILE_BLOCKS, 4096));
 					glUniform3f(uOffset, (float) (t.tx * (double) LodMath.TILE_BLOCKS - px), (float) -py,
 							(float) (t.tz * (double) LodMath.TILE_BLOCKS - pz));
 					glBindVertexArray(t.vao);
@@ -287,6 +336,21 @@ public final class LodRenderer {
 			glCullFace(prevCullMode);
 			glFrontFace(prevFront);
 		}
+	}
+
+	/** Luz do céu como a do lightmap do jogo (céu 15, sem luz de blocos). */
+	private static void updateLight() {
+		try {
+			LightmapRenderState ls = Minecraft.getInstance().gameRenderer.gameRenderState().lightmapRenderState;
+			LodMath.skyLight(v(ls.ambientColor), v(ls.nightVisionColor), ls.nightVisionEffectIntensity, v(ls.skyLightColor), ls.skyFactor,
+					ls.bossOverlayWorldDarkening, ls.darknessEffectScale, ls.brightness, light);
+		} catch (Throwable t) {
+			light[0] = light[1] = light[2] = 1f;
+		}
+	}
+
+	private static float[] v(org.joml.Vector3fc c) {
+		return new float[] {c.x(), c.y(), c.z()};
 	}
 
 	private static void set(int cap, boolean on) {
@@ -348,6 +412,9 @@ public final class LodRenderer {
 			uHole = glGetUniformLocation(program, "uHole");
 			uFogColor = glGetUniformLocation(program, "uFogColor");
 			uFog = glGetUniformLocation(program, "uFog");
+			uLight = glGetUniformLocation(program, "uLight");
+			uTileOrigin = glGetUniformLocation(program, "uTileOrigin");
+			uNoise = glGetUniformLocation(program, "uNoise");
 			ensureEbo(LodMath.TILE_BLOCKS / 2 * (LodMath.TILE_BLOCKS / 2) * 5);
 			ready = true;
 			lastError = "";
@@ -492,12 +559,15 @@ public final class LodRenderer {
 		for (long[] o : order) {
 			if (inFlight >= maxInFlight || store.queued.get() > 64) break;
 			int tx = (int) o[0], tz = (int) o[1];
-			double cxw = (tx + 0.5) * LodMath.TILE_BLOCKS, czw = (tz + 0.5) * LodMath.TILE_BLOCKS;
 			// mosaico todo dentro dos chunks normais: não é preciso
 			double fx = Math.max(Math.abs(tx * (double) LodMath.TILE_BLOCKS - px), Math.abs((tx + 1) * (double) LodMath.TILE_BLOCKS - px));
 			double fz = Math.max(Math.abs(tz * (double) LodMath.TILE_BLOCKS - pz), Math.abs((tz + 1) * (double) LodMath.TILE_BLOCKS - pz));
 			if (Math.sqrt(fx * fx + fz * fz) < hole) continue;
-			int step = LodMath.stepFor(Math.hypot(cxw - px, czw - pz), quality);
+			double near0 = LodMath.distToRect(px, pz, tx * (double) LodMath.TILE_BLOCKS, tz * (double) LodMath.TILE_BLOCKS,
+					(tx + 1) * (double) LodMath.TILE_BLOCKS, (tz + 1) * (double) LodMath.TILE_BLOCKS);
+			// qualidade alta: células finas junto à costura (custa ~2× quadrados); média/baixa: passo pela distância ao centro
+			int step = quality >= 2 ? LodMath.stepForSeam(Math.max(0, near0 - hole), 1.0)
+					: LodMath.stepFor(Math.hypot((tx + 0.5) * LodMath.TILE_BLOCKS - px, (tz + 0.5) * LodMath.TILE_BLOCKS - pz), quality);
 			long k = LodMath.key(tx, tz);
 			Tile t = tiles.computeIfAbsent(k, kk -> new Tile(tx, tz));
 			int version = store.tileVersion(tx, tz);

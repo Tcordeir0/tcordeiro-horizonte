@@ -16,7 +16,10 @@ public final class MeshBuilder {
 		int color(int gx, int gz);
 	}
 
-	public static final float SHADE_TOP = 1.0f, SHADE_NS = 0.80f, SHADE_EW = 0.64f;
+	/** Sombreamento por face como o do jogo (cima 1,0; norte/sul 0,8; este/oeste 0,6). */
+	public static final float SHADE_TOP = 1.0f, SHADE_NS = 0.80f, SHADE_EW = 0.60f;
+	/** Oclusão de ambiente simples: a base de cada parede (junto ao chão da vizinha) fica mais escura, como no jogo. */
+	public static final float WALL_AO = 0.78f;
 	/**
 	 * Comprimento máximo (blocos) de um topo juntado: o buraco dos chunks normais recorta-se por vértice (gl_ClipDistance), por isso
 	 * os quadrados não podem ser compridos demais (a corda de 32 blocos num círculo de 52 desvia ~2,5 blocos, dentro da sobreposição).
@@ -101,31 +104,44 @@ public final class MeshBuilder {
 				// norte (−z)
 				hn = h[(j - 1) * w + i];
 				if (hn != LodMath.NONE && hn < hh) {
-					quad(x0, hn, z0, x0, hh, z0, x1, hh, z0, x1, hn, z0, LodMath.packRgba(LodMath.shade(col, SHADE_NS)));
+					wall(x0, hn, z0, x0, hh, z0, x1, hh, z0, x1, hn, z0, col, SHADE_NS, true, false, false, true);
 					minY = Math.min(minY, hn);
 				}
 				// sul (+z)
 				hn = h[(j + 1) * w + i];
 				if (hn != LodMath.NONE && hn < hh) {
-					quad(x0, hn, z1, x1, hn, z1, x1, hh, z1, x0, hh, z1, LodMath.packRgba(LodMath.shade(col, SHADE_NS)));
+					wall(x0, hn, z1, x1, hn, z1, x1, hh, z1, x0, hh, z1, col, SHADE_NS, true, true, false, false);
 					minY = Math.min(minY, hn);
 				}
 				// oeste (−x)
 				hn = h[j * w + i - 1];
 				if (hn != LodMath.NONE && hn < hh) {
-					quad(x0, hn, z0, x0, hn, z1, x0, hh, z1, x0, hh, z0, LodMath.packRgba(LodMath.shade(col, SHADE_EW)));
+					wall(x0, hn, z0, x0, hn, z1, x0, hh, z1, x0, hh, z0, col, SHADE_EW, true, true, false, false);
 					minY = Math.min(minY, hn);
 				}
 				// este (+x)
 				hn = h[j * w + i + 1];
 				if (hn != LodMath.NONE && hn < hh) {
-					quad(x1, hn, z0, x1, hh, z0, x1, hh, z1, x1, hn, z1, LodMath.packRgba(LodMath.shade(col, SHADE_EW)));
+					wall(x1, hn, z0, x1, hh, z0, x1, hh, z1, x1, hn, z1, col, SHADE_EW, true, false, false, true);
 					minY = Math.min(minY, hn);
 				}
 			}
 		}
 		if (quads == 0) return new Mesh(tx, tz, step, new int[0], 0, 0, 0);
 		return new Mesh(tx, tz, step, Arrays.copyOf(data, quads * 16), quads, minY, maxY);
+	}
+
+	/** Parede com a base mais escura ({@code bottom*} diz que vértices estão em baixo). */
+	private void wall(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float dx, float dy, float dz,
+			int col, float shade, boolean bottomA, boolean bottomB, boolean bottomC, boolean bottomD) {
+		int top = LodMath.packRgba(LodMath.shade(col, shade)), low = LodMath.packRgba(LodMath.shade(col, shade * WALL_AO));
+		if ((quads + 1) * 16 > data.length) data = Arrays.copyOf(data, data.length * 2);
+		int o = quads * 16;
+		o = vert(o, ax, ay, az, bottomA ? low : top);
+		o = vert(o, bx, by, bz, bottomB ? low : top);
+		o = vert(o, cx, cy, cz, bottomC ? low : top);
+		vert(o, dx, dy, dz, bottomD ? low : top);
+		quads++;
 	}
 
 	private void quad(float ax, float ay, float az, float bx, float by, float bz, float cx, float cy, float cz, float dx, float dy, float dz,
